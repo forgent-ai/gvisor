@@ -159,6 +159,11 @@ func (fs *filesystem) newSysNetDir(ctx context.Context, root *auth.Credentials, 
 				"wmem_max":      fs.newInode(ctx, root, 0444, newStaticFile("212992")),
 			}),
 			"ipv6": fs.newStaticDir(ctx, root, map[string]kernfs.Inode{
+				"conf": fs.newStaticDir(ctx, root, map[string]kernfs.Inode{
+					"all": fs.newStaticDir(ctx, root, map[string]kernfs.Inode{
+						"keep_addr_on_down": fs.newInode(ctx, root, 0644, &ipv6KeepAddrOnDown{stack: stack}),
+					}),
+				}),
 				"bindv6only":       fs.newInode(ctx, root, 0444, newStaticFile("0")),
 				"ip6frag_time":     fs.newInode(ctx, root, 0444, newStaticFile("60")),
 				"ip_nonlocal_bind": fs.newInode(ctx, root, 0444, newStaticFile("0")),
@@ -247,6 +252,45 @@ func (*uuidData) Generate(ctx context.Context, buf *bytes.Buffer) error {
 // GetDynamicBytesPoller implements vfs.PollableDynamicBytesSource.GetDynamicBytesPoller.
 func (*domainnameData) GetDynamicBytesPoller(ctx context.Context) *vfs.DynamicBytesPoller {
 	return &kernel.KernelFromContext(ctx).DomainNamePoller
+}
+
+// ipv6KeepAddrOnDown implements vfs.WritableDynamicBytesSource for
+// /proc/sys/net/ipv6/conf/all/keep_addr_on_down.
+//
+// +stateify savable
+type ipv6KeepAddrOnDown struct {
+	kernfs.DynamicBytesFile
+
+	stack inet.Stack `state:"wait"`
+}
+
+var _ vfs.WritableDynamicBytesSource = (*ipv6KeepAddrOnDown)(nil)
+
+// Generate implements vfs.DynamicBytesSource.Generate.
+func (d *ipv6KeepAddrOnDown) Generate(ctx context.Context, buf *bytes.Buffer) error {
+	val := "0\n"
+	if d.stack.IPv6KeepAddrOnDown() {
+		val = "1\n"
+	}
+	_, err := buf.WriteString(val)
+	return err
+}
+
+// Write implements vfs.WritableDynamicBytesSource.Write.
+func (d *ipv6KeepAddrOnDown) Write(ctx context.Context, _ *vfs.FileDescription, src usermem.IOSequence, offset int64) (int64, error) {
+	if offset != 0 {
+		// No need to handle partial writes thus far.
+		return 0, linuxerr.EINVAL
+	}
+	buf := make([]int32, 1)
+	n, err := ParseInt32Vec(ctx, src, buf)
+	if err != nil || n == 0 {
+		return 0, err
+	}
+	if err := d.stack.SetIPv6KeepAddrOnDown(buf[0] != 0); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // tcpSackData implements vfs.WritableDynamicBytesSource for
