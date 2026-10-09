@@ -184,7 +184,7 @@ func (fs *filesystem) newSysNetDir(ctx context.Context, root *auth.Credentials, 
 				"conf": fs.newStaticDir(ctx, root, map[string]kernfs.Inode{
 					"all": fs.newStaticDir(ctx, root, map[string]kernfs.Inode{
 						"forwarding":        fs.newInode(ctx, root, 0644, &ipForwarding{stack: stack, protocol: ipv6.ProtocolNumber}),
-						"keep_addr_on_down": fs.newInode(ctx, root, 0644, &ipv6KeepAddrOnDown{stack: stack}),
+						"keep_addr_on_down": fs.newInode(ctx, root, 0644, &ipv6KeepAddrOnDown{}),
 					}),
 					// Stub for conf/default/forwarding; doesn't affect behavior.
 					"default": fs.newStaticDir(ctx, root, map[string]kernfs.Inode{
@@ -279,12 +279,11 @@ func (*domainnameData) GetDynamicBytesPoller(ctx context.Context) *vfs.DynamicBy
 
 // ipv6KeepAddrOnDown implements vfs.WritableDynamicBytesSource for
 // /proc/sys/net/ipv6/conf/all/keep_addr_on_down.
+// Reads and writes use the calling task's network namespace.
 //
 // +stateify savable
 type ipv6KeepAddrOnDown struct {
 	kernfs.DynamicBytesFile
-
-	stack inet.Stack `state:"wait"`
 }
 
 var _ vfs.WritableDynamicBytesSource = (*ipv6KeepAddrOnDown)(nil)
@@ -292,7 +291,7 @@ var _ vfs.WritableDynamicBytesSource = (*ipv6KeepAddrOnDown)(nil)
 // Generate implements vfs.DynamicBytesSource.Generate.
 func (d *ipv6KeepAddrOnDown) Generate(ctx context.Context, buf *bytes.Buffer) error {
 	val := "0\n"
-	if d.stack.IPv6KeepAddrOnDown() {
+	if inet.StackFromContext(ctx).IPv6KeepAddrOnDown() {
 		val = "1\n"
 	}
 	_, err := buf.WriteString(val)
@@ -310,7 +309,7 @@ func (d *ipv6KeepAddrOnDown) Write(ctx context.Context, _ *vfs.FileDescription, 
 	if err != nil || n == 0 {
 		return 0, err
 	}
-	if err := d.stack.SetIPv6KeepAddrOnDown(buf[0] != 0); err != nil {
+	if err := inet.StackFromContext(ctx).SetIPv6KeepAddrOnDown(buf[0] != 0); err != nil {
 		return 0, err
 	}
 	return n, nil
